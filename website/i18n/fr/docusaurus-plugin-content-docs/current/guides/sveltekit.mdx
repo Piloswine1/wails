@@ -2,7 +2,7 @@
 
 Ce tutoriel va vous présenter :
 
-1. L'installation minimale - Les étapes à suivre au minimum pour avoir Wails fonctionnant avec SvelteKit.
+1. Étapes d'installation minimales - Les étapes nécessaires pour obtenir une configuration minimale de Wails fonctionnant pour SvelteKit.
 2. Script d'installation - Script Bash pour réaliser les étapes d'installation minimale avec la marque Wails (pouvant être changée dans les options).
 3. Notes importantes - Problèmes qui peuvent être rencontrés avec SvelteKit + Wails et comment les corriger.
 
@@ -17,9 +17,9 @@ Ce tutoriel va vous présenter :
 - Naviguez dans votre dossier myapp nouvellement créé.
 - Supprimer le dossier nommé "frontend"
 
-##### Lorsque vous êtes dans le dossier racine du projet Wails. Utilisez votre gestionnaire de paquets préféré et installez SvelteKit comme nouveau frontend.  Suivez les instructions.
+##### Lorsque vous êtes dans le dossier racine du projet Wails. Utilisez le CLI Svelte pour créer un projet SvelteKit comme nouveau frontend. Suivez les instructions, rien de spécifique à Wails n'est nécessaire ici.
 
-- `npm create svelte@latest frontend`
+- `npx sv create frontend`
 
 ##### Modifier wails.json.
 
@@ -30,9 +30,9 @@ Ce tutoriel va vous présenter :
 
 - Le premier commentaire `//go:embed all:frontend/dist` doit être changé en `//go:embed all:frontend/build`
 
-##### Modify .gitignore
+##### Modifier .gitignore
 
-- The line `frontend/dist` needs to be replaced with `frontend/build`
+- La ligne `frontend/dist` doit être remplacée par `frontend/build`
 
 ##### Installez / supprimez des dépendances en utilisant votre gestionnaire de paquets favori.
 
