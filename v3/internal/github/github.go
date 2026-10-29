@@ -2,6 +2,7 @@ package github
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/charmbracelet/glamour/styles"
 	"io"
@@ -13,27 +14,39 @@ import (
 	"github.com/charmbracelet/glamour"
 )
 
+// ErrNoStableRelease means the available tags contain no stable release.
+var ErrNoStableRelease = errors.New("no release tag found")
+
 func GetReleaseNotes(tagVersion string, noColour bool) string {
 	resp, err := http.Get("https://api.github.com/repos/wailsapp/wails/releases/tags/" + url.PathEscape(tagVersion))
 	if err != nil {
 		return "Unable to retrieve release notes. Please check your network connection"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "No release notes found"
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("Unable to retrieve release notes: HTTP %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "Unable to retrieve release notes. Please check your network connection"
 	}
 
-	data := map[string]interface{}{}
+	var data struct {
+		Body *string `json:"body"`
+	}
 	err = json.Unmarshal(body, &data)
 	if err != nil {
 		return "Unable to retrieve release notes. Please check your network connection"
 	}
 
-	if data["body"] == nil {
+	if data.Body == nil {
 		return "No release notes found"
 	}
 
-	result := "# Release Notes for " + tagVersion + "\n" + data["body"].(string)
+	result := "# Release Notes for " + tagVersion + "\n" + *data.Body
 	var renderer *glamour.TermRenderer
 
 	if noColour {
@@ -51,47 +64,57 @@ func GetReleaseNotes(tagVersion string, noColour bool) string {
 	return result
 }
 
-// GetVersionTags gets the list of tags on the Wails repo
-// It returns a list of sorted tags in descending order
+// GetVersionTags gets the v3 release tags of the Wails repo, sorted in
+// descending semver order. It pages through the tags API (100 per page, up to
+// 10 pages) and ignores tags that are not v3 semver tags (v2.*, stray tags).
 func GetVersionTags() ([]*SemanticVersion, error) {
 	result := []*SemanticVersion{}
-	var err error
 
-	resp, err := http.Get("https://api.github.com/repos/wailsapp/wails/tags")
-	if err != nil {
-		return result, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return result, err
-	}
-
-	data := []map[string]interface{}{}
-	err = json.Unmarshal(body, &data)
-	if err != nil {
-		return result, err
-	}
-
-	// Convert tag data to Version structs
-	for _, tag := range data {
-		version := tag["name"].(string)
-		if !strings.HasPrefix(version, "v2") {
-			continue
-		}
-		semver, err := NewSemanticVersion(version)
+	for page := 1; page <= 10; page++ {
+		resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/wailsapp/wails/tags?per_page=100&page=%d", page))
 		if err != nil {
 			return result, err
 		}
-		result = append(result, semver)
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return result, fmt.Errorf("GitHub tags request failed: HTTP %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return result, err
+		}
+
+		data := []map[string]interface{}{}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return result, err
+		}
+		if len(data) == 0 {
+			break
+		}
+
+		for _, tag := range data {
+			name, _ := tag["name"].(string)
+			if !strings.HasPrefix(name, "v3.") {
+				continue
+			}
+			semver, err := NewSemanticVersion(name)
+			if err != nil {
+				continue // stray, non-semver tag
+			}
+			result = append(result, semver)
+		}
+		if len(data) < 100 {
+			break
+		}
 	}
 
-	// Reverse Sort
 	sort.Sort(sort.Reverse(SemverCollection(result)))
-
-	return result, err
+	return result, nil
 }
 
-// GetLatestStableRelease gets the latest stable release on GitHub
+// GetLatestStableRelease gets the newest non-prerelease tag: a weekly
+// (vX.Y.0) or a hotfix (vX.Y.Z). This is exactly what Go resolves "@latest" to.
 func GetLatestStableRelease() (result *SemanticVersion, err error) {
 	tags, err := GetVersionTags()
 	if err != nil {
@@ -104,23 +127,36 @@ func GetLatestStableRelease() (result *SemanticVersion, err error) {
 		}
 	}
 
-	return nil, fmt.Errorf("no release tag found")
+	return nil, ErrNoStableRelease
 }
 
-// GetLatestPreRelease gets the latest prerelease on GitHub
-func GetLatestPreRelease() (result *SemanticVersion, err error) {
+// GetLatestNightly gets the newest nightly pre-release (vX.Y.0-nightly.DATE).
+func GetLatestNightly() (result *SemanticVersion, err error) {
 	tags, err := GetVersionTags()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, tag := range tags {
-		if tag.IsPreRelease() {
+		if tag.IsNightly() {
 			return tag, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no prerelease tag found")
+	return nil, fmt.Errorf("no nightly tag found")
+}
+
+// GetLatestPreRelease gets the newest build of any kind (nightly, weekly,
+// hotfix or legacy beta/rc).
+func GetLatestPreRelease() (result *SemanticVersion, err error) {
+	tags, err := GetVersionTags()
+	if err != nil {
+		return nil, err
+	}
+	if len(tags) == 0 {
+		return nil, fmt.Errorf("no prerelease tag found")
+	}
+	return tags[0], nil
 }
 
 // IsValidTag returns true if the given string is a valid tag
